@@ -1,0 +1,48 @@
+name: Auto tag and release on version bump
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dist/cistern-irrigation-card.js"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read CARD_VERSION
+        id: v
+        run: |
+          VER=$(grep -m1 -oE 'CARD_VERSION = "[0-9]+\.[0-9]+\.[0-9]+"' dist/cistern-irrigation-card.js \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          if [ -z "$VER" ]; then
+            echo "Could not read CARD_VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      # Tag AND release in the same job. A separate `on: push: tags` workflow
+      # will NOT fire for tags pushed with the built-in GITHUB_TOKEN
+      # (anti-recursion), so the release is created directly here.
+      - name: Tag and release if this version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.v.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists - nothing to do."
+            exit 0
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" dist/cistern-irrigation-card.js \
+            --title "$TAG" \
+            --notes "Automated release for $TAG. See CHANGELOG.md for details."
+          echo "Released $TAG."

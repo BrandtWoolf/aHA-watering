@@ -1,0 +1,310 @@
+# =============================================================================
+# Irrigation Dashboard  (Settings > Dashboards > + New dashboard >
+#   ⋮ menu > Edit dashboard > ⋮ > Raw configuration editor > paste this)
+#
+# All entity ids below are your real entities.
+# Rachio Local exposes zones & schedules as switches, plus status sensors.
+#
+# Tab 1 "Cistern" (custom, default) requires these HACS frontend cards:
+#   - Mushroom            (piitaya/lovelace-mushroom)
+#   - Fluid Level Bg Card (swingerman/lovelace-fluid-level-background-card)
+#   - ApexCharts Card     (RomRider/apexcharts-card)
+# Tab 2 "Overview" is the built-in card version (no HACS needed).
+# =============================================================================
+title: Irrigation
+views:
+  # =========================================================================
+  #  TAB 1 — Custom (default)
+  # =========================================================================
+  - title: Cistern
+    path: cistern
+    icon: mdi:water
+    type: sections
+    max_columns: 3
+    sections:
+      # ----- Status chips -----
+      - type: grid
+        cards:
+          - type: heading
+            heading: Irrigation
+            heading_style: title
+            icon: mdi:sprinkler
+          - type: custom:mushroom-chips-card
+            alignment: center
+            chips:
+              - type: template
+                entity: switch.cistern_valve
+                icon: mdi:water-pump
+                icon_color: "{{ 'blue' if is_state('switch.cistern_valve','on') else 'grey' }}"
+                content: "{{ states('sensor.active_water_source') }}"
+                tap_action:
+                  action: toggle
+              - type: template
+                entity: switch.cistern_pump
+                icon: mdi:pump
+                icon_color: "{{ 'green' if is_state('switch.cistern_pump','on') else 'grey' }}"
+                content: "{{ 'Pump on' if is_state('switch.cistern_pump','on') else 'Pump off' }}"
+                tap_action:
+                  action: toggle
+              - type: template
+                entity: sensor.cistern_level
+                icon: mdi:water-percent
+                content: "{{ states('sensor.cistern_level') }}%"
+              - type: template
+                icon: mdi:sprinkler-variant
+                content: >-
+                  {% set z = ['switch.irrigation_zone_1',
+                              'switch.irrigation_zone_2',
+                              'switch.irrigation_zone_3',
+                              'switch.irrigation_zone_4'] %}
+                  {% set on = z | select('is_state','on') | list %}
+                  {{ 'Idle' if on|length == 0 else (on|length ~ ' zone(s) running') }}
+                icon_color: >-
+                  {% set z = ['switch.irrigation_zone_1',
+                              'switch.irrigation_zone_2',
+                              'switch.irrigation_zone_3',
+                              'switch.irrigation_zone_4'] %}
+                  {{ 'green' if (z|select('is_state','on')|list|length) > 0 else 'grey' }}
+
+      # ----- Cistern tank + source control -----
+      - title: Cistern & Source
+        type: grid
+        cards:
+          - type: custom:fluid-level-background-card
+            entity: sensor.cistern_level
+            full_value: 100
+            mask_image: tank
+            mask_size: contain
+            wave_style: realistic
+            level_color:
+              - 66
+              - 165
+              - 245
+              - 1
+            card:
+              type: custom:mushroom-template-card
+              primary: "{{ states('sensor.cistern_volume') }} gal"
+              secondary: "{{ states('sensor.cistern_level') }}% full"
+              icon: mdi:cup-water
+              icon_color: white
+              layout: vertical
+              multiline_secondary: true
+              tap_action:
+                action: more-info
+                entity: sensor.cistern_level
+          - type: custom:mushroom-template-card
+            primary: "{{ states('sensor.active_water_source') }} Water"
+            secondary: >-
+              {{ 'Drawing from cistern' if is_state('switch.cistern_valve','on')
+                 else 'Using street water' }}
+            icon: mdi:water-pump
+            icon_color: "{{ 'blue' if is_state('switch.cistern_valve','on') else 'grey' }}"
+            entity: switch.cistern_valve
+            tap_action:
+              action: toggle
+            hold_action:
+              action: more-info
+          - type: custom:mushroom-entity-card
+            entity: switch.cistern_pump
+            name: Cistern Pump
+            icon: mdi:pump
+            tap_action:
+              action: toggle
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: switch.cistern_pump
+                state: "on"
+              - condition: state
+                entity: switch.cistern_valve
+                state: "off"
+            card:
+              type: custom:mushroom-template-card
+              primary: Pump running, valve closed
+              secondary: Open the cistern valve to avoid dead-heading the pump
+              icon: mdi:alert
+              icon_color: red
+
+      # ----- Trend -----
+      - title: Trend
+        type: grid
+        cards:
+          - type: custom:apexcharts-card
+            header:
+              show: true
+              title: Cistern Level (7 days)
+            graph_span: 7d
+            yaxis:
+              - min: 0
+                max: 100
+            series:
+              - entity: sensor.cistern_level
+                name: Level
+                unit: "%"
+                type: area
+                stroke_width: 2
+                group_by:
+                  func: avg
+                  duration: 1h
+
+      # ----- Zones & schedule -----
+      - title: Zones
+        type: grid
+        cards:
+          - type: custom:mushroom-entity-card
+            entity: switch.irrigation_zone_1
+            name: Zone 1
+            icon: mdi:sprinkler-variant
+            secondary_info: last-changed
+            tap_action:
+              action: toggle
+          - type: custom:mushroom-entity-card
+            entity: switch.irrigation_zone_2
+            name: Zone 2
+            icon: mdi:sprinkler-variant
+            secondary_info: last-changed
+            tap_action:
+              action: toggle
+          - type: custom:mushroom-entity-card
+            entity: switch.irrigation_zone_3
+            name: Zone 3
+            icon: mdi:sprinkler-variant
+            secondary_info: last-changed
+            tap_action:
+              action: toggle
+          - type: custom:mushroom-entity-card
+            entity: switch.irrigation_zone_4
+            name: Zone 4
+            icon: mdi:sprinkler-variant
+            secondary_info: last-changed
+            tap_action:
+              action: toggle
+          - type: custom:mushroom-entity-card
+            entity: switch.irrigation_schedule
+            name: Deep Water Schedule
+            icon: mdi:calendar-clock
+            tap_action:
+              action: toggle
+
+  # =========================================================================
+  #  TAB 2 — Built-in (native cards, no HACS)
+  # =========================================================================
+  - title: Overview
+    path: irrigation
+    type: sections
+    max_columns: 3
+    sections:
+      # ---------------------------------------------------------------------
+      - title: Cistern
+        type: grid
+        cards:
+          - type: gauge
+            name: Cistern Level
+            entity: sensor.cistern_level
+            unit: "%"
+            needle: true
+            severity:
+              green: 60
+              yellow: 30
+              red: 0
+          - type: gauge
+            name: Volume
+            entity: sensor.cistern_volume
+            unit: gal
+            min: 0
+            max: 500
+            needle: true
+            severity:
+              green: 300
+              yellow: 150
+              red: 0
+          - type: entities
+            title: Cistern Details
+            state_color: true
+            entities:
+              - entity: sensor.cistern_volume
+                name: Water Remaining
+              - entity: sensor.cistern_level
+                name: Level
+              - entity: sensor.cistern_loop_current
+                name: Loop Current (4–20 mA)
+              - entity: sensor.shelly_uni_analog_voltage
+                name: Raw Shelly Voltage
+          - type: history-graph
+            title: Level History (7 days)
+            hours_to_show: 168
+            entities:
+              - entity: sensor.cistern_level
+                name: Level %
+
+      # ---------------------------------------------------------------------
+      - title: Water Source
+        type: grid
+        cards:
+          - type: entity
+            entity: sensor.active_water_source
+            name: Active Source
+            icon: mdi:water-pump
+          - type: entities
+            title: Manual Control
+            state_color: true
+            entities:
+              - entity: switch.cistern_valve
+                name: Cistern Valve (on = cistern)
+              - entity: switch.cistern_pump
+                name: Cistern Pump
+          - type: conditional
+            conditions:
+              - entity: switch.cistern_pump
+                state: "on"
+            card:
+              type: markdown
+              content: >
+                ⚠️ **Pump is running.** Confirm the cistern valve is open so the
+                pump is not dead-heading against a closed line.
+
+      # ---------------------------------------------------------------------
+      - title: Rachio Controller
+        type: grid
+        cards:
+          - type: entities
+            title: Zones
+            state_color: true
+            entities:
+              - entity: switch.irrigation_zone_1
+                name: Zone 1
+              - entity: switch.irrigation_zone_2
+                name: Zone 2
+              - entity: switch.irrigation_zone_3
+                name: Zone 3
+              - entity: switch.irrigation_zone_4
+                name: Zone 4
+          - type: entities
+            title: Schedule
+            state_color: true
+            entities:
+              - entity: switch.irrigation_schedule
+                name: Deep Water Schedule
+          - type: entities
+            title: Zone Status
+            state_color: true
+            entities:
+              - entity: sensor.irrigation_zone_1_status
+                name: Zone 1
+              - entity: sensor.irrigation_zone_2_status
+                name: Zone 2
+              - entity: sensor.irrigation_zone_3_status
+                name: Zone 3
+              - entity: sensor.irrigation_zone_4_status
+                name: Zone 4
+          - type: entities
+            title: Last Watered
+            entities:
+              - entity: sensor.irrigation_zone_1_last_watered
+                name: Zone 1
+              - entity: sensor.irrigation_zone_2_last_watered
+                name: Zone 2
+              - entity: sensor.irrigation_zone_3_last_watered
+                name: Zone 3
+              - entity: sensor.irrigation_zone_4_last_watered
+                name: Zone 4

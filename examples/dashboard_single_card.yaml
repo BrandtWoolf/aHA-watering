@@ -1,0 +1,43 @@
+# =============================================================================
+# Irrigation Dashboard — single custom card
+# Paste into: Settings > Dashboards > (your dashboard) > Edit >
+#   ⋮ menu > Raw configuration editor
+#
+# Requires the resource /local/cistern-irrigation-card.js registered as a
+# JavaScript Module, and a satellite image at <config>/www/property.jpg.
+# =============================================================================
+title: Irrigation
+views:
+  - title: Irrigation
+    path: irrigation
+    icon: mdi:sprinkler
+    cards:
+      - type: custom:cistern-irrigation-card
+        title: Irrigation
+        cistern:
+          level: sensor.cistern_level
+          volume: sensor.cistern_volume
+          capacity: 500
+        source:
+          valve: switch.cistern_valve
+          pump: switch.cistern_pump
+          active_source: sensor.active_water_source
+        property:
+          image: /local/property.jpg
+          aspect_ratio: "16 / 9"
+          debug: true            # set false once zone shapes are placed
+        zones:
+          - entity: switch.irrigation_zone_1
+            name: Zone 1
+            points: "40,30 60,32 58,55 38,52"
+          - entity: switch.irrigation_zone_2
+            name: Zone 2
+            points: "62,34 80,38 78,58 60,55"
+          - entity: switch.irrigation_zone_3
+            name: Zone 3
+            points: "60,58 80,60 78,80 58,78"
+          - entity: switch.irrigation_zone_4
+            name: Zone 4
+            points: "36,55 58,58 56,80 34,78"
+        schedule: switch.irrigation_schedule
+        columns: 2

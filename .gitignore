@@ -1,0 +1,6 @@
+# macOS / editor cruft
+.DS_Store
+*.swp
+
+# Local HA test artifacts
+*.log

@@ -1,0 +1,75 @@
+# =============================================================================
+# Cistern level conversion — add to configuration.yaml (or a package file)
+# =============================================================================
+#
+# The TL-136 is a 4–20 mA submersible level transmitter. A 4–20 mA current
+# loop is read by the Shelly Uni Plus analog input through a shunt resistor.
+# Shunt = two 1 kΩ resistors in parallel = 500 Ω:
+#   4 mA -> 2.0 V (empty),  20 mA -> 10.0 V (full-scale).
+#
+# CALIBRATE by observing the Shelly voltage when the cistern is empty and full,
+# then set v_empty / v_full below. Everything else derives from those two points.
+# -----------------------------------------------------------------------------
+
+# --- Adjustable constants via UI helpers (Settings > Devices & Services > Helpers)
+# Create these input_number helpers if you want to calibrate live without editing YAML:
+#   input_number.cistern_v_empty   (min 0, max 30, step 0.01)  default 2.0
+#   input_number.cistern_v_full    (min 0, max 30, step 0.01)  default 10.0
+#   input_number.cistern_capacity  (min 0, max 2000, step 1)   default 500
+# If you don't want helpers, the template below falls back to hard-coded values.
+
+template:
+  - sensor:
+      # ----- Loop current in mA (for diagnostics) -----
+      - name: "Cistern Loop Current"
+        unique_id: cistern_loop_current_ma
+        unit_of_measurement: "mA"
+        state_class: measurement
+        icon: mdi:current-dc
+        availability: >
+          {{ states('sensor.shelly_uni_analog_voltage') not in
+             ['unknown', 'unavailable', 'none'] }}
+        state: >
+          {% set v = states('sensor.shelly_uni_analog_voltage') | float(0) %}
+          {# 500 Ω shunt -> mA = volts / 500 * 1000 = volts * 2 #}
+          {{ (v * 2) | round(2) }}
+
+      # ----- Level percent (0–100 %) -----
+      - name: "Cistern Level"
+        unique_id: cistern_level_percent
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:water-percent
+        availability: >
+          {{ states('sensor.shelly_uni_analog_voltage') not in
+             ['unknown', 'unavailable', 'none'] }}
+        state: >
+          {% set v = states('sensor.shelly_uni_analog_voltage') | float(0) %}
+          {% set v_empty = states('input_number.cistern_v_empty') | float(2.0) %}
+          {% set v_full  = states('input_number.cistern_v_full')  | float(10.0) %}
+          {% set span = (v_full - v_empty) %}
+          {% set pct = ((v - v_empty) / span * 100) if span > 0 else 0 %}
+          {{ [[pct, 0] | max, 100] | min | round(1) }}
+
+      # ----- Volume in gallons -----
+      - name: "Cistern Volume"
+        unique_id: cistern_volume_gal
+        unit_of_measurement: "gal"
+        state_class: measurement
+        icon: mdi:cup-water
+        state: >
+          {% set pct = states('sensor.cistern_level') | float(0) %}
+          {% set cap = states('input_number.cistern_capacity') | float(500) %}
+          {{ (pct / 100 * cap) | round(0) }}
+
+      # ----- Active water source (derived from the valve switch) -----
+      # Assumes valve ON = cistern selected, OFF = street water.
+      - name: "Active Water Source"
+        unique_id: active_water_source
+        icon: mdi:water-pump
+        state: >
+          {% if is_state('switch.cistern_valve', 'on') %}
+            Cistern
+          {% else %}
+            Street
+          {% endif %}
