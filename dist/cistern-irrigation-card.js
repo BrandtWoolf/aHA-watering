@@ -47,7 +47,7 @@
  *       points: "50,30 70,35 68,55 48,52"   # polygon area in % coords (optional)
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.1.0";
 
 class CisternIrrigationCard extends HTMLElement {
   constructor() {
@@ -87,6 +87,13 @@ class CisternIrrigationCard extends HTMLElement {
       title: "Irrigation",
       cistern: { level: "sensor.cistern_level", volume: "sensor.cistern_volume", capacity: 500 },
       source: { valve: "switch.cistern_valve", pump: "switch.cistern_pump" },
+      weather: {
+        temperature: "sensor.tempest_temperature",
+        humidity: "sensor.tempest_humidity",
+        wind: "sensor.tempest_wind_speed",
+        rain_rate: "sensor.tempest_precipitation_intensity",
+        precip_type: "sensor.tempest_precipitation_type",
+      },
       zones: [{ entity: "switch.zone_1", name: "Zone 1" }],
     };
   }
@@ -142,12 +149,14 @@ class CisternIrrigationCard extends HTMLElement {
           <div class="src-pill" id="srcpill"><ha-icon icon="mdi:water-pump"></ha-icon><span id="srctext">—</span></div>
         </div>
 
+        ${this._weatherSection()}
+
         ${this._mapSection()}
 
         <div class="main">
           <div class="tankwrap" id="tankwrap" title="Cistern level">
             <div class="tank">
-              <div class="water" id="water"><span class="wave w1"></span><span class="wave w2"></span></div>
+              <div class="water" id="water"><span class="wave w1"></span><span class="wave w2"></span><span class="motion-badge" id="motionbadge"></span></div>
               <div class="tank-labels">
                 <div class="gal" id="gal">— gal</div>
                 <div class="pct" id="pct">—%</div>
@@ -196,6 +205,10 @@ class CisternIrrigationCard extends HTMLElement {
     if (c.schedule) $("schedbtn").addEventListener("click", () => this._toggle(c.schedule));
     $("stopbtn").addEventListener("click", () => this._stopAll());
 
+    this.shadowRoot.querySelectorAll(".wchip").forEach((el) => {
+      el.addEventListener("click", () => this._fireMoreInfo(el.dataset.entity));
+    });
+
     this.shadowRoot.querySelectorAll(".zone").forEach((el) => {
       el.addEventListener("click", () => this._toggle(el.dataset.entity));
     });
@@ -230,6 +243,72 @@ class CisternIrrigationCard extends HTMLElement {
     }
 
     this._built = true;
+  }
+
+  _weatherSection() {
+    const w = this._config.weather;
+    if (!w) return "";
+    const chips = [];
+    const add = (entity, icon, id) => {
+      if (entity) chips.push(`
+        <button class="wchip" id="${id}" data-entity="${entity}">
+          <ha-icon icon="${icon}"></ha-icon><span id="${id}-val">—</span>
+        </button>`);
+    };
+    // Condition/precip chip first (falls back to weather entity or precip type/rate).
+    const condEntity = w.entity || w.precip_type || w.rain_rate;
+    if (condEntity) {
+      chips.push(`
+        <button class="wchip cond" id="w-cond" data-entity="${condEntity}">
+          <ha-icon id="w-cond-icon" icon="mdi:weather-partly-cloudy"></ha-icon><span id="w-cond-val">—</span>
+        </button>`);
+    }
+    add(w.temperature, "mdi:thermometer", "w-temp");
+    add(w.rain_rate, "mdi:weather-pouring", "w-rain");
+    add(w.wind, "mdi:weather-windy", "w-wind");
+    add(w.humidity, "mdi:water-percent", "w-hum");
+    if (!chips.length) return "";
+    return `<div class="weather" id="weather">${chips.join("")}</div>`;
+  }
+
+  _weatherIcon(state) {
+    const s = String(state || "").toLowerCase();
+    const map = {
+      "clear-night": "mdi:weather-night",
+      "cloudy": "mdi:weather-cloudy",
+      "fog": "mdi:weather-fog",
+      "hail": "mdi:weather-hail",
+      "lightning": "mdi:weather-lightning",
+      "lightning-rainy": "mdi:weather-lightning-rainy",
+      "partlycloudy": "mdi:weather-partly-cloudy",
+      "pouring": "mdi:weather-pouring",
+      "rainy": "mdi:weather-rainy",
+      "rain": "mdi:weather-rainy",
+      "rain_hail": "mdi:weather-hail",
+      "snowy": "mdi:weather-snowy",
+      "snowy-rainy": "mdi:weather-snowy-rainy",
+      "sunny": "mdi:weather-sunny",
+      "windy": "mdi:weather-windy",
+      "windy-variant": "mdi:weather-windy-variant",
+      "exceptional": "mdi:alert-circle-outline",
+      "none": "mdi:weather-partly-cloudy",
+    };
+    return map[s] || "mdi:weather-partly-cloudy";
+  }
+
+  _isRaining() {
+    const w = this._config.weather;
+    if (!w) return false;
+    if (w.precip_type) {
+      const t = String(this._st(w.precip_type)).toLowerCase();
+      if (["rain", "hail", "rain_hail"].includes(t)) return true;
+    }
+    if (w.rain_rate && this._num(w.rain_rate, 0) > 0) return true;
+    if (w.entity) {
+      const c = String(this._st(w.entity)).toLowerCase();
+      if (["rainy", "pouring", "lightning-rainy", "hail", "snowy-rainy"].includes(c)) return true;
+    }
+    return false;
   }
 
   _mapSection() {
@@ -311,6 +390,38 @@ class CisternIrrigationCard extends HTMLElement {
     $("pct").textContent = level.toFixed(0) + "%";
     $("gal").textContent = Math.round(gal) + " gal";
 
+    // ---- motion: only slosh when the cistern is actively filling or emptying ----
+    const pumpOnNow = c.source && c.source.pump ? this._isOn(c.source.pump) : false;
+    const raining = this._isRaining();
+    const now = Date.now();
+    const hold = (c.cistern && c.cistern.motion_hold_seconds != null ? c.cistern.motion_hold_seconds : 90) * 1000;
+    if (this._lastLevel == null) {
+      this._lastLevel = level;
+    } else if (level > this._lastLevel + 0.2) {
+      this._risingUntil = now + hold;
+      this._lastLevel = level;
+    } else if (level < this._lastLevel - 0.2) {
+      this._fallingUntil = now + hold;
+      this._lastLevel = level;
+    }
+    const rising = now < (this._risingUntil || 0);
+    const falling = now < (this._fallingUntil || 0);
+    // Emptying: pump is pulling water out, or the level is clearly dropping.
+    const emptying = pumpOnNow || falling;
+    // Filling: it's raining and the level is climbing (rain topping up the cistern).
+    const filling = (raining && rising) || (rising && !emptying);
+    const moving = emptying || filling;
+    water.classList.toggle("moving", moving);
+    water.classList.toggle("filling", filling && !emptying);
+    water.classList.toggle("emptying", emptying);
+    const badge = $("motionbadge");
+    if (badge) {
+      badge.textContent = emptying ? "▼" : filling ? "▲" : "";
+      badge.hidden = !moving;
+    }
+
+    this._updateWeather(raining);
+
     // source state
     const onCistern = c.source.active_source
       ? String(this._st(c.source.active_source)).toLowerCase().indexOf("cistern") > -1
@@ -348,6 +459,50 @@ class CisternIrrigationCard extends HTMLElement {
     }
   }
 
+  _updateWeather(raining) {
+    const w = this._config.weather;
+    if (!w) return;
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    const fmt = (entity, digits) => {
+      const s = this._hass && this._hass.states[entity];
+      if (!s) return "—";
+      const v = parseFloat(s.state);
+      const unit = (s.attributes && s.attributes.unit_of_measurement) || "";
+      const num = isNaN(v) ? s.state : (digits != null ? v.toFixed(digits) : v);
+      return `${num}${unit ? " " + unit : ""}`;
+    };
+
+    // condition icon + label
+    const condIcon = $("w-cond-icon");
+    const condVal = $("w-cond-val");
+    if (condIcon && condVal) {
+      let label, iconState;
+      if (w.entity) {
+        iconState = this._st(w.entity);
+        label = iconState;
+      } else if (w.precip_type) {
+        iconState = this._st(w.precip_type);
+        label = iconState === "none" ? "Dry" : iconState;
+      } else {
+        iconState = raining ? "rainy" : "none";
+        label = raining ? "Rain" : "Dry";
+      }
+      condIcon.setAttribute("icon", this._weatherIcon(iconState));
+      condVal.textContent = String(label).replace(/_/g, " ").replace(/^\w/, (m) => m.toUpperCase());
+      const cond = $("w-cond");
+      if (cond) cond.classList.toggle("raining", raining);
+    }
+
+    if ($("w-temp-val")) $("w-temp-val").textContent = fmt(w.temperature, 0);
+    if ($("w-rain-val")) {
+      $("w-rain-val").textContent = fmt(w.rain_rate, 2);
+      const rc = $("w-rain");
+      if (rc) rc.classList.toggle("raining", raining);
+    }
+    if ($("w-wind-val")) $("w-wind-val").textContent = fmt(w.wind, 0);
+    if ($("w-hum-val")) $("w-hum-val").textContent = fmt(w.humidity, 0);
+  }
+
   _styles() {
     return `
       ha-card { padding: 16px; }
@@ -359,6 +514,18 @@ class CisternIrrigationCard extends HTMLElement {
       .src-pill.active { background:#1e88e5; color:#fff; }
       .src-pill ha-icon { --mdc-icon-size:18px; }
 
+      /* ---- weather strip ---- */
+      .weather { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+      .wchip { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px;
+        border:1px solid var(--divider-color); background: var(--secondary-background-color);
+        color: var(--primary-text-color); font-size:.9rem; font-weight:600; cursor:pointer;
+        transition: all .3s; }
+      .wchip:hover { border-color: var(--primary-color); }
+      .wchip ha-icon { --mdc-icon-size:18px; color: var(--secondary-text-color); }
+      .wchip.cond ha-icon { color:#42a5f5; }
+      .wchip.raining { background: rgba(30,136,229,.14); border-color:#1e88e5; color:#1565c0; }
+      .wchip.raining ha-icon { color:#1e88e5; }
+
       .main { display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }
 
       .tankwrap { display:flex; flex-direction:column; align-items:center; cursor:pointer; }
@@ -368,10 +535,19 @@ class CisternIrrigationCard extends HTMLElement {
       .water { position:absolute; left:0; right:0; bottom:0; height:0%;
         transition: height 1s ease, background .6s ease; }
       .wave { position:absolute; left:-50%; width:200%; height:200%; top:-165%;
-        background: rgba(255,255,255,.35); }
+        background: rgba(255,255,255,.35); animation-play-state: paused; opacity:.5; transition: opacity .6s ease; }
       .wave.w1 { border-radius:43%; animation: spin 7s linear infinite; }
       .wave.w2 { border-radius:47%; background: rgba(255,255,255,.18); animation: spin 12s linear infinite; }
+      /* Only animate the surface while the cistern is filling or emptying. */
+      .water.moving .wave { animation-play-state: running; opacity:1; }
       @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+      .motion-badge { position:absolute; top:4px; left:50%; transform:translateX(-50%);
+        font-size:.8rem; font-weight:800; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.5);
+        opacity:.9; pointer-events:none; }
+      .motion-badge[hidden] { display:none; }
+      .water.filling .motion-badge { animation: bob 1.4s ease-in-out infinite; }
+      .water.emptying .motion-badge { animation: bob 1.4s ease-in-out infinite reverse; }
+      @keyframes bob { 0%,100%{ transform:translate(-50%,0) } 50%{ transform:translate(-50%,-3px) } }
       .tank-labels { position:absolute; inset:0; display:flex; flex-direction:column;
         align-items:center; justify-content:center; text-shadow:0 1px 2px rgba(0,0,0,.35); pointer-events:none; }
       .gal { font-size:1.15rem; font-weight:700; color:#fff; }
@@ -453,7 +629,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "cistern-irrigation-card",
   name: "Cistern Irrigation Card",
-  description: "Cistern tank level, street/cistern source switching with pump interlock, and Rachio zone control.",
+  description: "Cistern tank level with live weather, source switching with pump interlock, and Rachio zone control.",
   preview: false,
 });
 
