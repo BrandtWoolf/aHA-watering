@@ -9,6 +9,10 @@ Designed around the [Rachio Local](https://github.com/biofects/rachio_local) int
 ## Features
 
 - 🪣 **Animated cistern tank** — gallons + %, color-coded (red/amber/blue) with a live water fill.
+- 🌊 **Motion-aware surface** — the water only sloshes while the cistern is actively filling
+  (raining + level rising) or emptying (pump running or level dropping); it sits still otherwise.
+- 🌦️ **Weather strip** — WeatherFlow Tempest condition, temperature, rain rate, wind, and humidity
+  as chips; rain highlights and drives the fill animation.
 - 🔀 **Source switcher** — Street ⇆ Cistern segmented control that toggles the valve.
 - ⚠️ **Pump interlock warning** — alerts if the pump runs while the valve is closed (dead-head protection).
 - 🌱 **Zone grid** — per-zone run/idle with a green glow on active zones.
@@ -49,6 +53,13 @@ convert voltage → mA → % → gallons. Add it via a package or your `configur
 | `source.valve`    | entity | **yes**  | Valve switch. `on` = cistern, `off` = street.           |
 | `source.pump`     | entity | no       | Pump switch.                                            |
 | `source.active_source` | entity | no  | Optional text sensor; else derived from the valve.      |
+| `cistern.motion_hold_seconds` | number | no | How long the fill/empty animation lingers after the last level change (default 90). |
+| `weather.entity`  | entity | no       | Optional `weather.*` entity (WeatherFlow **Cloud**) for condition + rain.  |
+| `weather.temperature` | entity | no   | Temperature sensor.                                     |
+| `weather.humidity` | entity | no      | Humidity sensor.                                        |
+| `weather.wind`    | entity | no       | Wind speed sensor.                                      |
+| `weather.rain_rate` | entity | no     | Rain rate / precipitation intensity sensor. `> 0` = raining. |
+| `weather.precip_type` | entity | no   | Precipitation type (`none`/`rain`/`hail`). Drives the rain state. |
 | `zones[]`         | list   | no       | Zone entities with `name`, optional `x`/`y`, `points`.  |
 | `schedule`        | entity | no       | Schedule switch.                                        |
 | `columns`         | number | no       | Zone grid columns (default 2).                          |
@@ -71,6 +82,12 @@ cistern:
 source:
   valve: switch.cistern_valve
   pump: switch.cistern_pump
+weather:
+  temperature: sensor.tempest_temperature
+  humidity: sensor.tempest_humidity
+  wind: sensor.tempest_wind_speed
+  rain_rate: sensor.tempest_precipitation_intensity
+  precip_type: sensor.tempest_precipitation_type
 zones:
   - entity: switch.irrigation_zone_1
     name: Zone 1

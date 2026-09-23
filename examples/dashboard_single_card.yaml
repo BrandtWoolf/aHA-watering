@@ -22,6 +22,14 @@ views:
           valve: switch.cistern_valve
           pump: switch.cistern_pump
           active_source: sensor.active_water_source
+        weather:
+          # WeatherFlow Tempest (local integration = sensors only, no weather.* entity).
+          temperature: sensor.tempest_temperature
+          humidity: sensor.tempest_humidity
+          wind: sensor.tempest_wind_speed
+          rain_rate: sensor.tempest_precipitation_intensity
+          precip_type: sensor.tempest_precipitation_type
+          # entity: weather.tempest   # optional: use a weather.* entity (cloud integration) instead
         property:
           image: /local/property.jpg
           aspect_ratio: "16 / 9"
