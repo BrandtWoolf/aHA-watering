@@ -16,6 +16,9 @@ Designed around the [Rachio Local](https://github.com/biofects/rachio_local) int
 - 🔀 **Source switcher** — Street ⇆ Cistern segmented control that toggles the valve.
 - ⚠️ **Pump interlock warning** — alerts if the pump runs while the valve is closed (dead-head protection).
 - 🌱 **Zone grid** — per-zone run/idle with a green glow on active zones.
+- 🌧️ **24 h rainfall estimate** — inches of rain inferred from gallons gained in the cistern
+  over the last 24 h divided by your collection area (`in = gal × 231 ÷ (sq ft × 144)`).
+  Pump drawdowns don't cancel out rain gains.
 - 🛰️ **Satellite overlay** — draw zone polygons on a photo of your yard that pulse green while watering.
 - 🗓️ **Schedule toggle** and a **Stop All** button.
 
@@ -50,6 +53,8 @@ convert voltage → mA → % → gallons. Add it via a package or your `configur
 | `cistern.level`   | entity | **yes**  | 0–100 % level sensor.                                   |
 | `cistern.volume`  | entity | no       | Gallons sensor. If omitted, derived from `capacity`.    |
 | `cistern.capacity`| number | no       | Tank capacity in gallons (default 500).                 |
+| `cistern.collection_area` | number | no | Rain collection (roof) area in **sq ft**. Enables the 24 h rainfall estimate under the tank. |
+| `cistern.rain_noise_gallons` | number | no | Ignore level changes smaller than this when estimating rain (default 1). |
 | `source.valve`    | entity | **yes**  | Valve switch. `on` = cistern, `off` = street.           |
 | `source.pump`     | entity | no       | Pump switch.                                            |
 | `source.active_source` | entity | no  | Optional text sensor; else derived from the valve.      |
@@ -79,6 +84,7 @@ cistern:
   level: sensor.cistern_level
   volume: sensor.cistern_volume
   capacity: 500
+  collection_area: 1200   # roof sq ft for the 24h rain estimate
 source:
   valve: switch.cistern_valve
   pump: switch.cistern_pump

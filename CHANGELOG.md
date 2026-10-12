@@ -3,6 +3,14 @@
 All notable changes to the Cistern Irrigation Card are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-10-11
+### Added
+- 24 h rainfall estimate under the tank: sums gallons gained in the cistern
+  over the last 24 h (from HA history, refreshed every 5 min) and converts to
+  inches using the new `cistern.collection_area` option (sq ft). Pump drawdowns
+  don't offset rain gains. Optional `cistern.rain_noise_gallons` (default 1)
+  filters sensor jitter.
+
 ## [1.1.0] - 2026-09-23
 ### Added
 - Weather strip powered by a WeatherFlow Tempest station (`weather` config):
