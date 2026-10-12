@@ -3,6 +3,15 @@
 All notable changes to the Cistern Irrigation Card are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-10-11
+### Fixed
+- 24 h rain estimate was far too high when the level sensor briefly dropped
+  out (reading 0 gal) — each recovery was counted as a fill. History is now
+  resampled per minute with a 5-minute median, and drops only reset the
+  baseline after holding for `cistern.rain_drawdown_minutes` (default 30).
+- Example `Cistern Volume` template now goes `unavailable` instead of 0 when
+  the level sensor is unavailable.
+
 ## [1.2.0] - 2026-10-11
 ### Added
 - 24 h rainfall estimate under the tank: sums gallons gained in the cistern

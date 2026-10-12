@@ -57,6 +57,11 @@ template:
         unit_of_measurement: "gal"
         state_class: measurement
         icon: mdi:cup-water
+        # Without this, a level dropout makes volume read 0 gal, and the
+        # recovery looks like a huge fill (inflating the card's rain estimate).
+        availability: >
+          {{ states('sensor.cistern_level') not in
+             ['unknown', 'unavailable', 'none'] }}
         state: >
           {% set pct = states('sensor.cistern_level') | float(0) %}
           {% set cap = states('input_number.cistern_capacity') | float(500) %}
