@@ -55,6 +55,7 @@ convert voltage → mA → % → gallons. Add it via a package or your `configur
 | `cistern.capacity`| number | no       | Tank capacity in gallons (default 500).                 |
 | `cistern.collection_area` | number | no | Rain collection (roof) area in **sq ft**. Enables the 24 h rainfall estimate under the tank. |
 | `cistern.rain_noise_gallons` | number | no | Ignore level changes smaller than this when estimating rain (default 1). |
+| `cistern.rain_drawdown_minutes` | number | no | A level drop must hold this long before it counts as a real drawdown, so sensor dropouts aren't counted as rain on recovery (default 30). |
 | `source.valve`    | entity | **yes**  | Valve switch. `on` = cistern, `off` = street.           |
 | `source.pump`     | entity | no       | Pump switch.                                            |
 | `source.active_source` | entity | no  | Optional text sensor; else derived from the valve.      |

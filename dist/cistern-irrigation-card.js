@@ -48,7 +48,7 @@
  *       points: "50,30 70,35 68,55 48,52"   # polygon area in % coords (optional)
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.2.1";
 
 const CUBIC_INCHES_PER_GALLON = 231;
 const RAIN_REFRESH_MS = 5 * 60 * 1000;
@@ -486,23 +486,54 @@ class CisternIrrigationCard extends HTMLElement {
     return { entity: cis.level, toGal: (v) => (Math.max(0, Math.min(100, v)) / 100) * cap };
   }
 
-  // Sum every rise in gallons over the window. Drops (pump use) reset the
-  // baseline so they don't cancel rain out; changes smaller than the noise
-  // threshold are ignored so sensor jitter isn't counted as rain.
-  _gallonsGained(values, noise) {
+  // Sum every rise in gallons over a 1-minute series. A drop only lowers the
+  // baseline once it has held for `holdMin` minutes (a real pump drawdown);
+  // shorter dips (sensor dropouts reading 0) are ignored so their recovery
+  // isn't counted as rain. Changes under `noise` gallons are ignored.
+  _gallonsGained(values, noise, holdMin) {
+    if (!values.length) return 0;
     let gained = 0;
-    let ref = null;
+    let ref = values[0];
+    let low = 0;
     for (const v of values) {
-      if (ref == null) {
-        ref = v;
-      } else if (v - ref >= noise) {
+      if (v - ref >= noise) {
         gained += v - ref;
         ref = v;
+        low = 0;
       } else if (ref - v >= noise) {
-        ref = v;
+        if (++low >= holdMin) {
+          ref = v;
+          low = 0;
+        }
+      } else {
+        low = 0;
       }
     }
     return gained;
+  }
+
+  // Convert state-change points [{t, v}] into a step series sampled every minute.
+  _resampleMinutes(points, endMs) {
+    if (!points.length) return [];
+    const out = [];
+    let i = 0;
+    for (let t = points[0].t; t <= endMs; t += 60000) {
+      while (i + 1 < points.length && points[i + 1].t <= t) i++;
+      out.push(points[i].v);
+    }
+    return out;
+  }
+
+  // Rolling median removes brief spikes in either direction.
+  _medianFilter(values, size) {
+    if (size < 3 || values.length < size) return values;
+    const half = Math.floor(size / 2);
+    return values.map((_, i) => {
+      const win = values
+        .slice(Math.max(0, i - half), Math.min(values.length, i + half + 1))
+        .sort((a, b) => a - b);
+      return win[Math.floor(win.length / 2)];
+    });
   }
 
   async _fetchRain() {
@@ -525,14 +556,21 @@ class CisternIrrigationCard extends HTMLElement {
         significant_changes_only: false,
       });
       const rows = (res && res[entity]) || [];
-      const values = rows
-        .map((r) => parseFloat(r.s != null ? r.s : r.state))
-        .filter((v) => !isNaN(v))
-        .map(toGal);
+      const toMs = (r) => {
+        const ts = r.lu != null ? r.lu : r.lc;
+        if (ts != null) return ts * 1000;
+        return Date.parse(r.last_updated || r.last_changed);
+      };
+      const points = rows
+        .map((r) => ({ t: toMs(r), v: parseFloat(r.s != null ? r.s : r.state) }))
+        .filter((p) => !isNaN(p.v) && !isNaN(p.t))
+        .map((p) => ({ t: p.t, v: toGal(p.v) }));
       const cur = parseFloat(this._st(entity));
-      if (!isNaN(cur)) values.push(toGal(cur));
+      if (!isNaN(cur)) points.push({ t: end.getTime(), v: toGal(cur) });
       const noise = cis.rain_noise_gallons != null ? Number(cis.rain_noise_gallons) : 1;
-      const gallons = this._gallonsGained(values, noise);
+      const hold = cis.rain_drawdown_minutes != null ? Number(cis.rain_drawdown_minutes) : 30;
+      const series = this._medianFilter(this._resampleMinutes(points, end.getTime()), 5);
+      const gallons = this._gallonsGained(series, noise, hold);
       const inches = (gallons * CUBIC_INCHES_PER_GALLON) / (area * 144);
       this._rain = { gallons, inches };
     } catch (err) {
