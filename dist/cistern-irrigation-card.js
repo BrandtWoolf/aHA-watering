@@ -17,6 +17,7 @@
  *     level: sensor.cistern_level          # 0-100 %
  *     volume: sensor.cistern_volume        # gallons (optional)
  *     capacity: 500                        # gallons (used if volume omitted)
+ *     collection_area: 1200                # roof sq ft -> 24h rain estimate (optional)
  *   source:
  *     valve: switch.cistern_valve     # on = cistern, off = street
  *     pump: switch.cistern_pump
@@ -47,7 +48,10 @@
  *       points: "50,30 70,35 68,55 48,52"   # polygon area in % coords (optional)
  */
 
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.2.0";
+
+const CUBIC_INCHES_PER_GALLON = 231;
+const RAIN_REFRESH_MS = 5 * 60 * 1000;
 
 class CisternIrrigationCard extends HTMLElement {
   constructor() {
@@ -69,6 +73,8 @@ class CisternIrrigationCard extends HTMLElement {
       ...config,
     };
     this._built = false; // rebuild structure when config changes
+    this._rain = null;
+    this._rainFetchedAt = 0;
   }
 
   set hass(hass) {
@@ -85,7 +91,7 @@ class CisternIrrigationCard extends HTMLElement {
   static getStubConfig() {
     return {
       title: "Irrigation",
-      cistern: { level: "sensor.cistern_level", volume: "sensor.cistern_volume", capacity: 500 },
+      cistern: { level: "sensor.cistern_level", volume: "sensor.cistern_volume", capacity: 500, collection_area: 1000 },
       source: { valve: "switch.cistern_valve", pump: "switch.cistern_pump" },
       weather: {
         temperature: "sensor.tempest_temperature",
@@ -163,6 +169,15 @@ class CisternIrrigationCard extends HTMLElement {
               </div>
             </div>
             <div class="tank-caption">Cistern</div>
+            ${
+              c.cistern.collection_area > 0
+                ? `<div class="rainest" id="rainest" title="Estimated rainfall over the last 24 h from cistern gain ÷ collection area">
+                     <ha-icon icon="mdi:weather-rainy"></ha-icon>
+                     <span id="rainest-in">— in</span>
+                     <span class="rainest-sub" id="rainest-gal">24h</span>
+                   </div>`
+                : ""
+            }
           </div>
 
           <div class="controls">
@@ -390,6 +405,8 @@ class CisternIrrigationCard extends HTMLElement {
     $("pct").textContent = level.toFixed(0) + "%";
     $("gal").textContent = Math.round(gal) + " gal";
 
+    this._updateRainEstimate();
+
     // ---- motion: only slosh when the cistern is actively filling or emptying ----
     const pumpOnNow = c.source && c.source.pump ? this._isOn(c.source.pump) : false;
     const raining = this._isRaining();
@@ -457,6 +474,97 @@ class CisternIrrigationCard extends HTMLElement {
       $("schedbtn").classList.toggle("on", on);
       $("schedtext").textContent = on ? "Schedule On" : "Schedule";
     }
+  }
+
+  // ---- 24h rainfall estimate from cistern gain ---------------------------
+  _rainSource() {
+    const cis = this._config.cistern;
+    if (cis.volume && this._hass.states[cis.volume]) {
+      return { entity: cis.volume, toGal: (v) => v };
+    }
+    const cap = cis.capacity || 500;
+    return { entity: cis.level, toGal: (v) => (Math.max(0, Math.min(100, v)) / 100) * cap };
+  }
+
+  // Sum every rise in gallons over the window. Drops (pump use) reset the
+  // baseline so they don't cancel rain out; changes smaller than the noise
+  // threshold are ignored so sensor jitter isn't counted as rain.
+  _gallonsGained(values, noise) {
+    let gained = 0;
+    let ref = null;
+    for (const v of values) {
+      if (ref == null) {
+        ref = v;
+      } else if (v - ref >= noise) {
+        gained += v - ref;
+        ref = v;
+      } else if (ref - v >= noise) {
+        ref = v;
+      }
+    }
+    return gained;
+  }
+
+  async _fetchRain() {
+    const cis = this._config.cistern;
+    const area = parseFloat(cis.collection_area);
+    if (!(area > 0) || !this._hass || !this._hass.callWS) return;
+    this._rainLoading = true;
+    this._rainFetchedAt = Date.now();
+    const { entity, toGal } = this._rainSource();
+    const end = new Date();
+    const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+    try {
+      const res = await this._hass.callWS({
+        type: "history/history_during_period",
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        entity_ids: [entity],
+        minimal_response: true,
+        no_attributes: true,
+        significant_changes_only: false,
+      });
+      const rows = (res && res[entity]) || [];
+      const values = rows
+        .map((r) => parseFloat(r.s != null ? r.s : r.state))
+        .filter((v) => !isNaN(v))
+        .map(toGal);
+      const cur = parseFloat(this._st(entity));
+      if (!isNaN(cur)) values.push(toGal(cur));
+      const noise = cis.rain_noise_gallons != null ? Number(cis.rain_noise_gallons) : 1;
+      const gallons = this._gallonsGained(values, noise);
+      const inches = (gallons * CUBIC_INCHES_PER_GALLON) / (area * 144);
+      this._rain = { gallons, inches };
+    } catch (err) {
+      console.warn("[cistern-irrigation-card] rain estimate history fetch failed", err);
+      this._rain = null;
+    } finally {
+      this._rainLoading = false;
+      this._renderRain();
+    }
+  }
+
+  _updateRainEstimate() {
+    if (!(this._config.cistern.collection_area > 0)) return;
+    if (!this._rainLoading && Date.now() - (this._rainFetchedAt || 0) > RAIN_REFRESH_MS) {
+      this._fetchRain();
+    }
+    this._renderRain();
+  }
+
+  _renderRain() {
+    const inEl = this.shadowRoot.getElementById("rainest-in");
+    const galEl = this.shadowRoot.getElementById("rainest-gal");
+    if (!inEl || !galEl) return;
+    if (!this._rain) {
+      inEl.textContent = "— in";
+      galEl.textContent = "24h";
+      return;
+    }
+    inEl.textContent = `${this._rain.inches.toFixed(2)} in`;
+    galEl.textContent = `24h · +${Math.round(this._rain.gallons)} gal`;
+    const el = this.shadowRoot.getElementById("rainest");
+    if (el) el.classList.toggle("wet", this._rain.inches >= 0.01);
   }
 
   _updateWeather(raining) {
@@ -553,6 +661,13 @@ class CisternIrrigationCard extends HTMLElement {
       .gal { font-size:1.15rem; font-weight:700; color:#fff; }
       .pct { font-size:.85rem; color:#f5f5f5; }
       .tank-caption { margin-top:6px; font-size:.8rem; color:var(--secondary-text-color); }
+      .rainest { margin-top:6px; display:flex; flex-direction:column; align-items:center; gap:1px;
+        padding:4px 10px; border-radius:10px; background: var(--secondary-background-color);
+        font-size:.9rem; font-weight:700; color: var(--primary-text-color); transition: all .3s; }
+      .rainest ha-icon { --mdc-icon-size:16px; color: var(--secondary-text-color); }
+      .rainest .rainest-sub { font-size:.7rem; font-weight:500; color: var(--secondary-text-color); }
+      .rainest.wet { background: rgba(30,136,229,.14); color:#1565c0; }
+      .rainest.wet ha-icon { color:#1e88e5; }
 
       .controls { flex:1; min-width:180px; display:flex; flex-direction:column; gap:10px; justify-content:center; }
       .seg { display:flex; border:1px solid var(--divider-color); border-radius:10px; overflow:hidden; }
